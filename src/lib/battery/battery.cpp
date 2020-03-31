@@ -130,20 +130,20 @@ Battery::updateBatteryStatus(hrt_abstime timestamp, float voltage_v, float curre
 	filterThrottle(throttle_normalized);
 	filterCurrent(current_a);
 	sumDischarged(timestamp, current_a);
-	estimateRemaining(_voltage_filtered_v, _current_filtered_a, _throttle_filtered);
+	estimateRemaining(_voltage_filter_v.get(), _current_filter_a.get(), _throttle_filter.get());
 	computeScale();
 
 	if (_battery_initialized) {
 		determineWarning(connected);
 	}
 
-	if (_voltage_filtered_v > 2.1f) {
+	if (_voltage_filter_v.get() > 2.1f) {
 		_battery_initialized = true;
 		_battery_status.voltage_v = voltage_v;
-		_battery_status.voltage_filtered_v = _voltage_filtered_v;
+		_battery_status.voltage_filtered_v = _voltage_filter_v.get();
 		_battery_status.scale = _scale;
 		_battery_status.current_a = current_a;
-		_battery_status.current_filtered_a = _current_filtered_a;
+		_battery_status.current_filtered_a = _current_filter_a.get();
 		_battery_status.discharged_mah = _discharged_mah;
 		_battery_status.warning = _warning;
 		_battery_status.remaining = _remaining;
@@ -177,43 +177,34 @@ void
 Battery::filterVoltage(float voltage_v)
 {
 	if (!_battery_initialized) {
-		_voltage_filtered_v = voltage_v;
+		_voltage_filter_v.reset(voltage_v);
 	}
 
 	// TODO: inspect that filter performance
-	const float filtered_next = _voltage_filtered_v * 0.99f + voltage_v * 0.01f;
-
-	if (PX4_ISFINITE(filtered_next)) {
-		_voltage_filtered_v = filtered_next;
-	}
+	_voltage_filter_v.setParameters(100, 1.f);
+	_voltage_filter_v.apply(voltage_v);
 }
 
 void
 Battery::filterCurrent(float current_a)
 {
 	if (!_battery_initialized) {
-		_current_filtered_a = current_a;
+		_current_filter_a.reset(current_a);
 	}
 
 	// ADC poll is at 100Hz, this will perform a low pass over approx 500ms
-	const float filtered_next = _current_filtered_a * 0.98f + current_a * 0.02f;
-
-	if (PX4_ISFINITE(filtered_next)) {
-		_current_filtered_a = filtered_next;
-	}
+	_current_filter_a.setParameters(100, .5f);
+	_current_filter_a.apply(current_a);
 }
 
 void Battery::filterThrottle(float throttle)
 {
 	if (!_battery_initialized) {
-		_throttle_filtered = throttle;
+		_throttle_filter.reset(throttle);
 	}
 
-	const float filtered_next = _throttle_filtered * 0.99f + throttle * 0.01f;
-
-	if (PX4_ISFINITE(filtered_next)) {
-		_throttle_filtered = filtered_next;
-	}
+	_throttle_filter.setParameters(100, 1.f);
+	_throttle_filter.apply(throttle);
 }
 
 void
@@ -239,7 +230,7 @@ Battery::sumDischarged(hrt_abstime timestamp, float current_a)
 }
 
 void
-Battery::estimateRemaining(float voltage_v, float current_a, float throttle)
+Battery::estimateRemaining(const float voltage_v, const float current_a, const float throttle)
 {
 	// remaining battery capacity based on voltage
 	float cell_voltage = voltage_v / _params.n_cells;
